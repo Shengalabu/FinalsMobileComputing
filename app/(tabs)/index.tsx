@@ -1,75 +1,158 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import * as SQLite from 'expo-sqlite';
+import React, { useEffect, useState } from 'react';
+import { Alert, FlatList, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-import { HelloWave } from '@/components/HelloWave';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
+let db: SQLite.SQLiteDatabase | null = null;
 
-export default function HomeScreen() {
+const setupDatabase = async () => {
+  db = await SQLite.openDatabaseAsync('streaks.db');
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS streaks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT,
+      count INTEGER,
+      last_updated TEXT,
+      alive INTEGER
+    );
+  `);
+};
+
+export default function App() {
+  const [text, setText] = useState('');
+  const [streaks, setStreaks] = useState<any[]>([]);
+
+  useEffect(() => {
+    setupDatabase().then(() => {
+      checkStreakStatus().then(fetchStreaks);
+    });
+  }, []);
+
+  const today = new Date().toISOString().split('T')[0];
+
+  const fetchStreaks = async () => {
+    if (!db) return;
+    const results = await db.getAllAsync<any>('SELECT * FROM streaks;');
+    setStreaks(results);
+  };
+
+  const checkStreakStatus = async () => {
+    if (!db) return;
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yDate = yesterday.toISOString().split('T')[0];
+
+    await db.runAsync(
+      `UPDATE streaks SET alive = 0 WHERE last_updated < ? AND alive = 1;`,
+      [today]
+    );
+  };
+
+  const addStreak = async () => {
+    if (!db || !text.trim()) return;
+    await db.runAsync(
+      'INSERT INTO streaks (name, count, last_updated, alive) VALUES (?, ?, ?, ?);',
+      [text.trim(), 0, '', 1]
+    );
+    setText('');
+    fetchStreaks();
+  };
+
+  const continueStreak = async (id: number, last_updated: string, count: number) => {
+    if (!db) return;
+    if (last_updated === today) {
+      Alert.alert('Already continued today!');
+      return;
+    }
+    await db.runAsync(
+      'UPDATE streaks SET count = ?, last_updated = ? WHERE id = ?;',
+      [count + 1, today, id]
+    );
+    fetchStreaks();
+  };
+
+  const cancelTodayInput = async (id: number, last_updated: string, count: number) => {
+    if (!db || last_updated !== today) return;
+    await db.runAsync(
+      'UPDATE streaks SET count = ?, last_updated = ? WHERE id = ?;',
+      [count - 1, '', id]
+    );
+    fetchStreaks();
+  };
+
+  const deleteStreak = async (id: number) => {
+    if (!db) return;
+    await db.runAsync('DELETE FROM streaks WHERE id = ?;', [id]);
+    fetchStreaks();
+  };
+
+  const editStreak = async (id: number) => {
+    const newName = prompt('Enter new name');
+    if (newName && db) {
+      await db.runAsync('UPDATE streaks SET name = ? WHERE id = ?;', [newName, id]);
+      fetchStreaks();
+    }
+  };
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
+    <View style={{ flex: 1, padding: 20, backgroundColor: '#f4f6fb' }}>
+      <Text style={{ fontSize: 28, fontWeight: 'bold', marginBottom: 20, color: '#222', letterSpacing: 1 }}>Streaks</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, backgroundColor: '#fff', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 6, elevation: 2 }}>
+        <TextInput
+          placeholder="New Streak Name"
+          value={text}
+          onChangeText={setText}
+          style={{ flex: 1, fontSize: 16, padding: 10, borderRadius: 10, backgroundColor: '#f0f2f7', marginRight: 8, borderWidth: 0 }}
+          placeholderTextColor="#aaa"
         />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+        <TouchableOpacity onPress={addStreak} style={{ backgroundColor: '#4f8cff', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 16 }}>
+          <Text style={{ color: '#fff', fontWeight: 'bold', fontSize: 16 }}>Add</Text>
+        </TouchableOpacity>
+      </View>
+      <FlatList
+        data={streaks}
+        keyExtractor={item => item.id.toString()}
+        contentContainerStyle={{ paddingBottom: 40 }}
+        renderItem={({ item }) => (
+          <View
+            style={{
+              borderWidth: 0,
+              marginVertical: 7,
+              padding: 18,
+              borderRadius: 18,
+              backgroundColor: item.alive ? '#e6f7ee' : '#fbeaea',
+              shadowColor: '#000',
+              shadowOpacity: 0.07,
+              shadowRadius: 8,
+              elevation: 2,
+            }}
+          >
+            <Text style={{ fontSize: 20, fontWeight: '600', color: item.alive ? '#2e7d5b' : '#b71c1c', marginBottom: 6 }}>
+              {item.name}
+            </Text>
+            <Text style={{ fontSize: 15, color: '#555', marginBottom: 10 }}>
+              {item.count} day(s) {item.alive ? '' : <Text style={{ color: '#b71c1c' }}>(Dead)</Text>}
+            </Text>
+            {item.alive && (
+              <View style={{ flexDirection: 'row', marginTop: 2, marginBottom: 8 }}>
+                <TouchableOpacity onPress={() => continueStreak(item.id, item.last_updated, item.count)} style={{ backgroundColor: '#4f8cff', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14, marginRight: 8 }}>
+                  <Text style={{ color: '#fff', fontWeight: 'bold' }}>Continue</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => cancelTodayInput(item.id, item.last_updated, item.count)} style={{ backgroundColor: '#f0ad4e', borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14 }}>
+                  <Text style={{ color: '#fff', fontWeight: 'bold' }}>Cancel Today</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            <View style={{ flexDirection: 'row', marginTop: 2 }}>
+              <TouchableOpacity onPress={() => editStreak(item.id)} style={{ marginRight: 16 }}>
+                <Text style={{ color: '#4f8cff', fontWeight: 'bold', fontSize: 15 }}>Edit</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => deleteStreak(item.id)}>
+                <Text style={{ color: '#b71c1c', fontWeight: 'bold', fontSize: 15 }}>Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+      />
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-  },
-});
