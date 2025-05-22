@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as SQLite from 'expo-sqlite';
 import React, { useEffect, useState } from 'react';
-import { Alert, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-import DraggableFlatList, { RenderItemParams } from 'react-native-draggable-flatlist';
+import { Alert, FlatList, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 let db: SQLite.SQLiteDatabase | null = null;
 
@@ -15,10 +15,12 @@ const setupDatabase = async () => {
       count INTEGER,
       last_updated TEXT,
       alive INTEGER,
-      "order" INTEGER
+      "order" INTEGER,
+      starred INTEGER DEFAULT 0
     );
   `);
   await db.execAsync('ALTER TABLE streaks ADD COLUMN "order" INTEGER;').catch(() => {});
+  await db.execAsync('ALTER TABLE streaks ADD COLUMN starred INTEGER DEFAULT 0;').catch(() => {});
 };
 
 export default function App() {
@@ -28,6 +30,9 @@ export default function App() {
   const [editingText, setEditingText] = useState('');
   const [modalVisible, setModalVisible] = useState(false);
   const [newStreakText, setNewStreakText] = useState('');
+
+  const lastDeleteTapRef = React.useRef<{ [key: number]: number }>({});
+  const deleteTimeoutRef = React.useRef<{ [key: number]: ReturnType<typeof setTimeout> }>({});
 
   useEffect(() => {
     setupDatabase().then(() => {
@@ -39,18 +44,15 @@ export default function App() {
 
   const fetchStreaks = async () => {
     if (!db) return;
-    const results = await db.getAllAsync<any>('SELECT * FROM streaks ORDER BY "order" ASC, id DESC;');
+    const results = await db.getAllAsync<any>('SELECT * FROM streaks ORDER BY starred DESC, "order" ASC, id DESC;');
     setStreaks(results);
   };
 
   const checkStreakStatus = async () => {
     if (!db) return;
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yDate = yesterday.toISOString().split('T')[0];
-
+    // Only mark as dead if last_updated is set and before today
     await db.runAsync(
-      `UPDATE streaks SET alive = 0 WHERE last_updated < ? AND alive = 1;`,
+      `UPDATE streaks SET alive = 0 WHERE last_updated != '' AND last_updated < ? AND alive = 1;`,
       [today]
     );
   };
@@ -139,152 +141,180 @@ export default function App() {
     fetchStreaks();
   };
 
+  const toggleStarred = async (id: number, starred: number) => {
+    if (!db) return;
+    await db.runAsync('UPDATE streaks SET starred = ? WHERE id = ?;', [starred ? 0 : 1, id]);
+    fetchStreaks();
+  };
+
   return (
-    <View style={{ flex: 1 }}>
-      <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>Streaks</Text>
-        {streaks.length === 0 && (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>It looks empty here, go and add a new streak!</Text>
-          </View>
-        )}
-        <DraggableFlatList
-          data={streaks}
-          keyExtractor={item => item.id.toString()}
-          contentContainerStyle={{ paddingBottom: 40 }}
-          onDragEnd={({ data }) => {
-            setStreaks(data);
-            updateStreakOrder(data);
-          }}
-          renderItem={({ item, drag, isActive }: RenderItemParams<any>) => (
-            editingId === item.id ? (
-              <View style={[styles.streakCard, item.last_updated === today
-                ? styles.updatedTodayCard
-                : item.alive
-                ? styles.aliveCard
-                : styles.deadCard]}
-              >
-                <TextInput
-                  value={editingText}
-                  onChangeText={setEditingText}
-                  style={[styles.textInput, { fontSize: 20, marginBottom: 10 }]}
-                  autoFocus
-                />
-                <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
-                  <TouchableOpacity onPress={saveEditStreak} style={[styles.addButton, { marginRight: 8 }]}> 
-                    <Ionicons name="checkmark" size={22} color="#fff" />
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={cancelEditStreak} style={styles.cancelButton}>
-                    <Ionicons name="close" size={22} color="#fff" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : (
-              <View
-                style={[
-                  styles.streakCard,
-                  item.last_updated === today
-                    ? styles.updatedTodayCard
-                    : item.alive
-                    ? styles.aliveCard
-                    : styles.deadCard,
-                  isActive && { opacity: 0.7 },
-                  { flexDirection: 'column', alignItems: 'stretch', position: 'relative' },
-                ]}
-              >
-                {/* Card content */}
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  onPress={() => {
-                    if (item.last_updated === today) {
-                      cancelTodayInput(item.id, item.last_updated, item.count);
-                    } else {
-                      continueStreak(item.id, item.last_updated, item.count);
-                    }
-                  }}
-                  style={{ flex: 1 }}
-                >
-                  <View style={styles.streakHeaderRow}>
-                    <View style={styles.streakDayCountRow}>
-                      <Text style={styles.streakFireIcon}>
-                        {item.last_updated === today ? '🔥' : '🧊'}
-                      </Text>
-                      <Text style={[
-                        styles.streakDayCount,
-                        item.last_updated === today && { color: '#ff9800' },
-                      ]}>
-                        {item.count}
-                      </Text>
-                      <Text style={[
-                        styles.streakDayLabel,
-                        item.last_updated === today && { color: '#ff9800' },
-                      ]}> {item.count === 1 ? 'DAY' : 'DAYS'}</Text>
-                    </View>
-                    <TouchableOpacity onPress={() => editStreak(item.id, item.name)}>
-                      <Ionicons name="pencil" size={22} color="#444" />
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={styles.streakName}>{item.name}</Text>
-                  <View style={styles.streakFooterRow}>
-                    <View style={{ flex: 1 }} />
-                    <TouchableOpacity onPress={() => deleteStreak(item.id)}>
-                      <Ionicons name="trash" size={22} color="#444" />
-                    </TouchableOpacity>
-                  </View>
-                </TouchableOpacity>
-                {/* Absolutely positioned drag handle at bottom left, does not affect layout */}
-                <View style={{ position: 'absolute', left: 8, bottom: 8, zIndex: 10 }} pointerEvents="box-none">
-                  <TouchableOpacity
-                    onLongPress={drag}
-                    onPressIn={drag}
-                    delayLongPress={100}
-                    style={{ justifyContent: 'center', alignItems: 'center', height: 24, width: 18, opacity: 0.3 }}
-                    hitSlop={{ left: 8, right: 8, top: 8, bottom: 8 }}
-                  >
-                    <Ionicons name="reorder-two" size={18} color="#aaa" style={{ transform: [{ rotate: '90deg' }] }} />
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <View style={{ flex: 1 }}>
+        <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
+          <Text style={styles.title}>Streaker</Text>
+          {streaks.length === 0 && (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>It looks empty here, go and add a new streak!</Text>
+            </View>
           )}
-        />
-      </ScrollView>
-      <TouchableOpacity
-        style={styles.fab}
-        onPress={() => setModalVisible(true)}
-        activeOpacity={1}
-      >
-        <Ionicons name="add" size={36} color="#fff" />
-      </TouchableOpacity>
-      <Modal
-        visible={modalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.title}>Add New Streak</Text>
-            <TextInput
-              placeholder="New Streak Name"
-              value={newStreakText}
-              onChangeText={setNewStreakText}
-              style={styles.textInput}
-              placeholderTextColor="#aaa"
-              autoFocus
-            />
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16 }}>
-              <TouchableOpacity onPress={handleAddStreak} style={[styles.addButton, { marginRight: 8 }]}> 
-                <Ionicons name="checkmark" size={22} color="#fff" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.cancelButton}>
-                <Ionicons name="close" size={22} color="#fff" />
-              </TouchableOpacity>
+          <FlatList
+            data={streaks}
+            keyExtractor={item => item.id.toString()}
+            contentContainerStyle={{ paddingBottom: 40 }}
+            renderItem={({ item }) => {
+              // Determine if the streak is dead (not updated and day has changed)
+              const isCreatedToday = new Date(item.id * 1000).toISOString().split('T')[0] === today;
+              const isEditable = item.last_updated === '' && isCreatedToday && item.alive;
+              const isDead = !item.alive;
+              return editingId === item.id ? (
+                <View style={[styles.streakCard, item.last_updated === today
+                  ? styles.updatedTodayCard
+                  : item.alive
+                  ? styles.aliveCard
+                  : styles.deadCard]}
+                >
+                  <TextInput
+                    value={editingText}
+                    onChangeText={setEditingText}
+                    style={[styles.textInput, { fontSize: 20, marginBottom: 10 }]}
+                    autoFocus
+                  />
+                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                    <TouchableOpacity onPress={saveEditStreak} style={[styles.addButton, { marginRight: 8 }]}> 
+                      <Ionicons name="checkmark" size={22} color="#fff" />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={cancelEditStreak} style={styles.cancelButton}>
+                      <Ionicons name="close" size={22} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <View
+                  style={[
+                    styles.streakCard,
+                    item.last_updated === today
+                      ? styles.updatedTodayCard
+                      : item.alive
+                      ? styles.aliveCard
+                      : styles.deadCard,
+                    { flexDirection: 'column', alignItems: 'stretch', position: 'relative' },
+                  ]}
+                >
+                  {/* Card content */}
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onPress={() => {
+                      if (item.last_updated === today) {
+                        cancelTodayInput(item.id, item.last_updated, item.count);
+                      } else {
+                        continueStreak(item.id, item.last_updated, item.count);
+                      }
+                    }}
+                    style={{ flex: 1 }}
+                    disabled={isDead}
+                  >
+                    <View style={styles.streakHeaderRow}>
+                      <View style={styles.streakDayCountRow}>
+                        <Text style={styles.streakFireIcon}>
+                          {isDead ? '💀' : item.last_updated === today ? '🔥' : '🧊'}
+                        </Text>
+                        <Text style={[
+                          styles.streakDayCount,
+                          item.last_updated === today && { color: '#ff9800' },
+                        ]}>
+                          {item.count}
+                        </Text>
+                        <Text style={[
+                          styles.streakDayLabel,
+                          item.last_updated === today && { color: '#ff9800' },
+                        ]}> {item.count === 1 ? 'DAY' : 'DAYS'}</Text>
+                      </View>
+                      <TouchableOpacity onPress={() => editStreak(item.id, item.name)} style={{opacity: 0.25}}>
+                        <Ionicons name="pencil" size={22} color="#444" />
+                      </TouchableOpacity>
+                    </View>
+                    <Text style={styles.streakName}>{item.name}</Text>
+                    <View style={styles.starRowContainer}>
+                      <View style={{ flex: 1 }} />
+                      <TouchableOpacity onPress={() => toggleStarred(item.id, item.starred)} style={styles.starButton}>
+                        <Ionicons name={item.starred ? 'star' : 'star-outline'} size={22} color={item.starred ? '#ffd700' : '#aaa'} />
+                      </TouchableOpacity>
+                    </View>
+                    <View style={styles.streakFooterRow}>
+                      <View style={{ flexDirection: 'column', alignItems: 'flex-end', flex: 1 }}>
+                        <TouchableOpacity
+                          onPress={() => {
+                            const id = item.id;
+                            const now = Date.now();
+                            if (!lastDeleteTapRef.current[id]) {
+                              lastDeleteTapRef.current[id] = now;
+                              deleteTimeoutRef.current[id] = setTimeout(() => {
+                                lastDeleteTapRef.current[id] = 0;
+                              }, 300);
+                            } else {
+                              if (now - lastDeleteTapRef.current[id] < 300) {
+                                clearTimeout(deleteTimeoutRef.current[id]);
+                                lastDeleteTapRef.current[id] = 0;
+                                deleteStreak(id);
+                              } else {
+                                lastDeleteTapRef.current[id] = now;
+                                deleteTimeoutRef.current[id] = setTimeout(() => {
+                                  lastDeleteTapRef.current[id] = 0;
+                                }, 300);
+                              }
+                            }
+                          }}
+                          style={{ marginTop: 8, opacity: 0.25 }}
+                        >
+                          <Ionicons name="trash" size={22} color="#444" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              );
+            }}
+          />
+        </ScrollView>
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => setModalVisible(true)}
+          activeOpacity={1}
+        >
+          <Ionicons name="add" size={36} color="#fff" />
+        </TouchableOpacity>
+        <Modal
+          visible={modalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setModalVisible(false)}
+          hardwareAccelerated
+          statusBarTranslucent
+        >
+          <View style={styles.modalOverlay} pointerEvents="box-none">
+            <View style={styles.modalContent}>
+              <Text style={styles.title}>Add New Streak</Text>
+              <TextInput
+                placeholder="New Streak Name"
+                value={newStreakText}
+                onChangeText={setNewStreakText}
+                style={[styles.textInput, { color: '#222', backgroundColor: '#f0f2f7', fontSize: 18, minHeight: 44 }]}
+                placeholderTextColor="#aaa"
+                autoFocus
+              />
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16, paddingBottom: 12 }}>
+                <TouchableOpacity onPress={handleAddStreak} style={[styles.addButton, { marginRight: 8 }]}> 
+                  <Ionicons name="checkmark" size={22} color="#fff" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => setModalVisible(false)} style={styles.cancelButton}>
+                  <Ionicons name="close" size={22} color="#fff" />
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
-      </Modal>
-    </View>
+        </Modal>
+      </View>
+    </GestureHandlerRootView>
   );
 }
 
@@ -337,7 +367,7 @@ const styles = StyleSheet.create({
   streakCard: {
     borderWidth: 0,
     marginVertical: 7,
-    padding: 18,
+    padding: 15, 
     borderRadius: 18,
     shadowColor: '#000',
     shadowOpacity: 0.07,
@@ -356,7 +386,7 @@ const styles = StyleSheet.create({
   },
   streakFireIcon: {
     fontSize: 32,
-    marginRight: 0,
+    marginRight: 5,
     marginTop: -5,
   },
   streakDayCount: {
@@ -386,6 +416,17 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     flex: 1,
     marginTop: 32,
+  },
+  starRowContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 8,
+  },
+  starButton: {
+    marginRight: 0,
+    marginLeft: 0,
+    marginBottom: 0,
+    alignSelf: 'flex-end',
   },
   deadText: {
     color: '#b71c1c',
@@ -441,8 +482,11 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    right: 24,
+    left: 0,
+    right: 0,
     bottom: 32,
+    marginLeft: 'auto',
+    marginRight: 'auto',
     backgroundColor: '#fcc072', 
     borderRadius: 32,
     width: 64,

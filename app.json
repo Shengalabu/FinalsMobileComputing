@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "AppName",
+    "name": "Streaker",
     "slug": "AppName",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -16,7 +16,8 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.johnemmanuel.AppName"
     },
     "web": {
       "bundler": "metro",
@@ -38,6 +39,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a176d4a6-54be-4344-8e6d-e5b27d33e90e"
+      }
     }
   }
 }
