@@ -366,8 +366,9 @@ const styles = StyleSheet.create({
   },
   streakCard: {
     borderWidth: 0,
-    marginVertical: 7,
-    padding: 15, 
+    marginVertical: 4, 
+    paddingVertical: 10, 
+    paddingHorizontal: 15, 
     borderRadius: 18,
     shadowColor: '#000',
     shadowOpacity: 0.07,
@@ -409,6 +410,7 @@ const styles = StyleSheet.create({
     color: '#444',
     marginBottom: 0,
     marginLeft: 8,
+    paddingTop: 2,
   },
   streakFooterRow: {
     flexDirection: 'row',
@@ -482,11 +484,9 @@ const styles = StyleSheet.create({
   },
   fab: {
     position: 'absolute',
-    left: 0,
-    right: 0,
+    left: '50%',
     bottom: 32,
-    marginLeft: 'auto',
-    marginRight: 'auto',
+    transform: [{ translateX: -32 }], // half of width (64/2)
     backgroundColor: '#fcc072', 
     borderRadius: 32,
     width: 64,
